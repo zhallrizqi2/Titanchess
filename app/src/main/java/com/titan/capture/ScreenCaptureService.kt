@@ -46,11 +46,11 @@ class ScreenCaptureService : Service() {
         }
 
         try {
-            val resultCode = intent?.getIntExtra("resultCode", -1) ?: -1
+            val resultCode = intent?.getIntExtra("resultCode", Int.MIN_VALUE) ?: Int.MIN_VALUE
             val data = intent?.getParcelableExtra<Intent>("data")
 
-            if (resultCode == -1 || data == null) {
-                logAndToast("resultCode/data tidak valid, service berhenti")
+            if (resultCode != android.app.Activity.RESULT_OK || data == null) {
+                logAndToast("resultCode/data tidak valid (resultCode=$resultCode), service berhenti")
                 stopSelf()
                 return START_NOT_STICKY
             }
