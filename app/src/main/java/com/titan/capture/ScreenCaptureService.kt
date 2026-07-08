@@ -79,6 +79,15 @@ class ScreenCaptureService : Service() {
     }
 
     private fun setupVirtualDisplay() {
+        mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                Log.e(tag, "MediaProjection dihentikan oleh sistem")
+                virtualDisplay?.release()
+                imageReader?.close()
+            }
+        }, mainHandler)
+
         val metrics = DisplayMetrics()
         val display = (getSystemService(DISPLAY_SERVICE) as DisplayManager)
             .getDisplay(android.view.Display.DEFAULT_DISPLAY)
