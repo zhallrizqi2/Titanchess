@@ -4,17 +4,26 @@ import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Base64
+import android.webkit.WebSettings
+import android.webkit.WebView
 import android.widget.Button
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.ByteArrayOutputStream
 
 class MainActivity : Activity() {
 
     private lateinit var projectionManager: MediaProjectionManager
+    private lateinit var webView: WebView
+    private lateinit var bridge: BoardAnalyzerBridge
 
     companion object {
         const val REQUEST_CODE_SCREEN_CAPTURE = 1001
@@ -28,9 +37,41 @@ class MainActivity : Activity() {
         projectionManager =
             getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
+        setupWebView()
+
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             checkNotificationPermissionThenCapture()
         }
+
+        findViewById<Button>(R.id.btnTestModel).setOnClickListener {
+            runModelSmokeTest()
+        }
+    }
+
+    private fun setupWebView() {
+        webView = WebView(this)
+        val settings: WebSettings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.allowFileAccess = true
+
+        bridge = BoardAnalyzerBridge(this)
+        webView.addJavascriptInterface(bridge, "AndroidBridge")
+        webView.loadUrl("file:///android_asset/index.html")
+    }
+
+    private fun runModelSmokeTest() {
+        Toast.makeText(this, "Menjalankan test model...", Toast.LENGTH_SHORT).show()
+
+        val bitmap = Bitmap.createBitmap(256, 256, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+
+        val outputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream)
+        val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+        val dataUrl = "data:image/png;base64,$base64"
+
+        webView.evaluateJavascript("analyzeImage('$dataUrl')", null)
     }
 
     private fun checkNotificationPermissionThenCapture() {
