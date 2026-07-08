@@ -13,8 +13,12 @@ import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -22,8 +26,10 @@ class ScreenCaptureService : Service() {
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val channelId = "titan_capture_channel"
+    private val tag = "TitanCapture"
 
     override fun onCreate() {
         super.onCreate()
@@ -31,21 +37,43 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(1, buildNotification())
-
-        val resultCode = intent?.getIntExtra("resultCode", -1) ?: -1
-        val data = intent?.getParcelableExtra<Intent>("data")
-
-        if (resultCode == -1 || data == null) {
+        try {
+            startForeground(1, buildNotification())
+        } catch (e: Exception) {
+            logAndToast("Gagal startForeground: ${e.message}")
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val projectionManager =
-            getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+        try {
+            val resultCode = intent?.getIntExtra("resultCode", -1) ?: -1
+            val data = intent?.getParcelableExtra<Intent>("data")
 
-        setupVirtualDisplay()
+            if (resultCode == -1 || data == null) {
+                logAndToast("resultCode/data tidak valid, service berhenti")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            val projectionManager =
+                getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(resultCode, data)
+
+            if (mediaProjection == null) {
+                logAndToast("MediaProjection null, gagal dibuat")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+
+            setupVirtualDisplay()
+            logAndToast("Virtual display berhasil dibuat")
+
+        } catch (e: Exception) {
+            logAndToast("ERROR di onStartCommand: ${e.javaClass.simpleName}: ${e.message}")
+            Log.e(tag, "onStartCommand error", e)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         return START_STICKY
     }
@@ -71,10 +99,14 @@ class ScreenCaptureService : Service() {
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            image?.let {
-                val bitmap = imageToBitmap(it, width, height)
-                it.close()
+            try {
+                val image = reader.acquireLatestImage()
+                image?.let {
+                    val bitmap = imageToBitmap(it, width, height)
+                    it.close()
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Error saat proses image", e)
             }
         }, null)
     }
@@ -111,6 +143,13 @@ class ScreenCaptureService : Service() {
             .setContentText("Menganalisis papan catur di layar")
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .build()
+    }
+
+    private fun logAndToast(message: String) {
+        Log.e(tag, message)
+        mainHandler.post {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onDestroy() {
