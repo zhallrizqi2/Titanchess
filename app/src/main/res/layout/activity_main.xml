@@ -19,4 +19,11 @@
         android:layout_height="wrap_content"
         android:text="Mulai Screen Capture" />
 
+    <Button
+        android:id="@+id/btnTestModel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Test Model (Smoke Test)" />
+
 </LinearLayout>
