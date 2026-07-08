@@ -1,4 +1,4 @@
-const SQUARE_SIZE = 32;
+const SQUARE_SIZE = 64;
 const PIECE_LABELS = [
   "empty", "wB", "wK", "wN", "wP", "wQ", "wR",
   "bB", "bK", "bN", "bP", "bQ", "bR",
