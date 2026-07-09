@@ -203,6 +203,10 @@ class ScreenCaptureService : Service() {
                 val dataUrl = "data:image/png;base64,$base64"
                 webView?.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
                     Log.d(tag, "evaluateJavascript callback: $result")
+                    mainHandler.post {
+                        Toast.makeText(this, "JS callback: $result", Toast.LENGTH_LONG).show()
+                    }
+                }
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
