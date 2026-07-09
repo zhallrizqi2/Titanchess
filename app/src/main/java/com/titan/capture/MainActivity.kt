@@ -8,8 +8,10 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Base64
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -44,12 +46,29 @@ class MainActivity : Activity() {
         setupWebView()
 
         findViewById<Button>(R.id.btnStart).setOnClickListener {
-            checkNotificationPermissionThenCapture()
+            checkOverlayPermissionThenNotification()
         }
 
         findViewById<Button>(R.id.btnTestModel).setOnClickListener {
             runModelSmokeTest()
         }
+
+        findViewById<Button>(R.id.btnCalibrate).setOnClickListener {
+            startActivity(Intent(this, CalibrationActivity::class.java))
+        }
+    }
+
+    private fun checkOverlayPermissionThenNotification() {
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain' dulu untuk Titan Capture", Toast.LENGTH_LONG).show()
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            return
+        }
+        checkNotificationPermissionThenCapture()
     }
 
     private fun setupWebView() {
