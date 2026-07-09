@@ -1,4 +1,4 @@
-package com.titan.capture
+gpackage com.titan.capture
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -43,6 +43,7 @@ class ScreenCaptureService : Service() {
     private var bridge: BoardAnalyzerBridge? = null
     private var isAnalyzing = false
     private var lastAnalysisTime = 0L
+    private var captureCounter = 0
     private val analysisIntervalMs = 2500L
 
     override fun onCreate() {
@@ -158,11 +159,20 @@ class ScreenCaptureService : Service() {
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
+            captureCounter++
+            if (captureCounter <= 5) {
+                Log.d(tag, "onImageAvailable terpanggil, hitungan ke-$captureCounter")
+                mainHandler.post {
+                    Toast.makeText(this, "Frame masuk #$captureCounter", Toast.LENGTH_SHORT).show()
+                }
+            }
             try {
                 val now = System.currentTimeMillis()
                 val image = reader.acquireLatestImage()
-                if (image == null) return@setOnImageAvailableListener
-
+                if (image == null) {
+                    Log.d(tag, "acquireLatestImage() null")
+                    return@setOnImageAvailableListener
+                }
                 if (isAnalyzing || (now - lastAnalysisTime) < analysisIntervalMs) {
                     image.close()
                     return@setOnImageAvailableListener
