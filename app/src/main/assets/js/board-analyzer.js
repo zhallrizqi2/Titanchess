@@ -63,19 +63,21 @@ function getSquareGrayscaleFloat32(ctx, col, row, squareW, squareH) {
 }
 
 async function classifySquare(grayFloat32) {
-  const inputName = pieceModel.inputNodes[0];
+  const inputName = pieceModel.inputNodes.find((n) => n !== "KeepProb") || pieceModel.inputNodes[0];
   const input = tf.tensor2d(grayFloat32, [1, SQUARE_SIZE * SQUARE_SIZE]);
+  const keepProb = tf.scalar(1.0);
   let output;
   try {
-    output = pieceModel.execute({ [inputName]: input });
+    output = pieceModel.execute({ [inputName]: input, KeepProb: keepProb });
   } catch (e) {
     input.dispose();
     const input4d = tf.tensor4d(grayFloat32, [1, SQUARE_SIZE, SQUARE_SIZE, 1]);
-    output = pieceModel.execute({ [inputName]: input4d });
+    output = pieceModel.execute({ [inputName]: input4d, KeepProb: keepProb });
     input4d.dispose();
   }
   const data = await output.data();
   input.dispose();
+  keepProb.dispose();
   output.dispose();
 
   let maxIdx = 0;
