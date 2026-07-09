@@ -118,8 +118,11 @@ function boardToFen(board, whiteToMove = true) {
 }
 
 async function imageToFen(dataUrl) {
+  logToAndroid("imageToFen mulai, load model...");
   await loadModels();
+  logToAndroid("Model siap, load gambar...");
   const img = await loadImageFromDataUrl(dataUrl);
+  logToAndroid("Gambar dimuat: " + img.width + "x" + img.height);
 
   const canvas = document.getElementById("tv-work-canvas");
   canvas.width = img.width;
@@ -139,6 +142,7 @@ async function imageToFen(dataUrl) {
       rowPieces.push(label);
     }
     board.push(rowPieces);
+    logToAndroid("Baris " + (r+1) + "/8 selesai");
   }
 
   return boardToFen(board, true);
