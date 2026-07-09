@@ -19,15 +19,21 @@ import android.os.Looper
 import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.WindowManager
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.webkit.WebViewAssetLoader
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 
 class ScreenCaptureService : Service() {
 
@@ -46,10 +52,77 @@ class ScreenCaptureService : Service() {
     private var captureCounter = 0
     private val analysisIntervalMs = 2500L
 
+    private var calibrationButton: Button? = null
+    private var calibrationRequested = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         mainHandler.post { setupWebView() }
+        mainHandler.post { setupCalibrationButton() }
+    }
+
+    private fun setupCalibrationButton() {
+        if (!android.provider.Settings.canDrawOverlays(this)) return
+        try {
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            val button = Button(this)
+            button.text = "Kalibrasi"
+            button.setBackgroundColor(android.graphics.Color.parseColor("#CC2196F3"))
+            button.setTextColor(android.graphics.Color.WHITE)
+
+            val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                overlayType,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                android.graphics.PixelFormat.TRANSLUCENT
+            )
+            params.gravity = Gravity.TOP or Gravity.START
+            params.x = 0
+            params.y = 200
+
+            var initialX = 0
+            var initialY = 0
+            var touchStartX = 0f
+            var touchStartY = 0f
+
+            button.setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        touchStartX = event.rawX
+                        touchStartY = event.rawY
+                        false
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX + (event.rawX - touchStartX).toInt()
+                        params.y = initialY + (event.rawY - touchStartY).toInt()
+                        windowManager.updateViewLayout(v, params)
+                        false
+                    }
+                    else -> false
+                }
+            }
+
+            button.setOnClickListener {
+                calibrationRequested = true
+                Toast.makeText(this, "Menunggu frame berikutnya untuk kalibrasi...", Toast.LENGTH_SHORT).show()
+            }
+
+            windowManager.addView(button, params)
+            calibrationButton = button
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal buat tombol kalibrasi", e)
+        }
     }
 
     private fun setupWebView() {
@@ -91,20 +164,20 @@ class ScreenCaptureService : Service() {
         }
 
         try {
-            val windowManager = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
             val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             } else {
                 @Suppress("DEPRECATION")
-                android.view.WindowManager.LayoutParams.TYPE_PHONE
+                WindowManager.LayoutParams.TYPE_PHONE
             }
 
-            val params = android.view.WindowManager.LayoutParams(
+            val params = WindowManager.LayoutParams(
                 1, 1,
                 overlayType,
-                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 android.graphics.PixelFormat.TRANSLUCENT
             )
             windowManager.addView(view, params)
@@ -204,18 +277,22 @@ class ScreenCaptureService : Service() {
                     return@setOnImageAvailableListener
                 }
 
-                if (isAnalyzing || (now - lastAnalysisTime) < analysisIntervalMs) {
-                    image.close()
-                    return@setOnImageAvailableListener
-                }
-
                 val bitmap = imageToBitmap(image, width, height)
                 image.close()
+
+                if (calibrationRequested) {
+                    calibrationRequested = false
+                    saveCalibrationImage(bitmap)
+                }
+
+                if (isAnalyzing || (now - lastAnalysisTime) < analysisIntervalMs) {
+                    return@setOnImageAvailableListener
+                }
 
                 lastAnalysisTime = now
                 isAnalyzing = true
                 updateNotification("Capture #$captureCounter -> mulai analisis...")
-                sendBitmapToAnalyzer(bitmap)
+                sendBitmapToAnalyzer(applyCropIfEnabled(bitmap))
 
             } catch (e: Exception) {
                 Log.e(tag, "Error saat proses image", e)
@@ -223,6 +300,44 @@ class ScreenCaptureService : Service() {
                 isAnalyzing = false
             }
         }, mainHandler)
+    }
+
+    private fun saveCalibrationImage(bitmap: Bitmap) {
+        try {
+            val file = File(filesDir, "calibration.png")
+            FileOutputStream(file).use { out ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+            }
+            mainHandler.post {
+                Toast.makeText(this, "Kalibrasi disimpan! Buka app, tap 'Atur Area Papan'", Toast.LENGTH_LONG).show()
+            }
+            Log.i(tag, "Gambar kalibrasi disimpan ke ${file.absolutePath}")
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal simpan gambar kalibrasi", e)
+        }
+    }
+
+    private fun applyCropIfEnabled(bitmap: Bitmap): Bitmap {
+        val prefs = getSharedPreferences("titan_prefs", MODE_PRIVATE)
+        val enabled = prefs.getBoolean("crop_enabled", false)
+        if (!enabled) return bitmap
+
+        val left = prefs.getFloat("crop_left", 0f)
+        val top = prefs.getFloat("crop_top", 0f)
+        val right = prefs.getFloat("crop_right", 1f)
+        val bottom = prefs.getFloat("crop_bottom", 1f)
+
+        val x = (left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
+        val y = (top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
+        val w = ((right - left) * bitmap.width).toInt().coerceIn(1, bitmap.width - x)
+        val h = ((bottom - top) * bitmap.height).toInt().coerceIn(1, bitmap.height - y)
+
+        return try {
+            Bitmap.createBitmap(bitmap, x, y, w, h)
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal crop bitmap, pakai full frame", e)
+            bitmap
+        }
     }
 
     private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
@@ -241,9 +356,6 @@ class ScreenCaptureService : Service() {
                 val dataUrl = "data:image/png;base64,$base64"
                 currentWebView.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
                     Log.d(tag, "evaluateJavascript callback: $result")
-                    mainHandler.post {
-                        updateNotification("JS callback diterima: $result")
-                    }
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
@@ -306,12 +418,11 @@ class ScreenCaptureService : Service() {
         imageReader?.close()
         mediaProjection?.stop()
         try {
-            webView?.let {
-                val windowManager = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
-                windowManager.removeView(it)
-            }
+            val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+            webView?.let { windowManager.removeView(it) }
+            calibrationButton?.let { windowManager.removeView(it) }
         } catch (e: Exception) {
-            Log.e(tag, "Gagal remove WebView dari window", e)
+            Log.e(tag, "Gagal remove view dari window", e)
         }
         webView?.destroy()
         super.onDestroy()
