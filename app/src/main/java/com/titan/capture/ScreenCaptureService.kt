@@ -196,12 +196,18 @@ class ScreenCaptureService : Service() {
     private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
         mainHandler.post {
             try {
+                val currentWebView = webView
+                if (currentWebView == null) {
+                    Toast.makeText(this, "WEBVIEW MASIH NULL, belum siap!", Toast.LENGTH_LONG).show()
+                    isAnalyzing = false
+                    return@post
+                }
                 Toast.makeText(this, "Mengirim capture ke analyzer...", Toast.LENGTH_SHORT).show()
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)
                 val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
                 val dataUrl = "data:image/png;base64,$base64"
-                webView?.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
+                currentWebView.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
                     Log.d(tag, "evaluateJavascript callback: $result")
                     mainHandler.post {
                         Toast.makeText(this, "JS callback: $result", Toast.LENGTH_LONG).show()
@@ -209,6 +215,9 @@ class ScreenCaptureService : Service() {
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
+                mainHandler.post {
+                    Toast.makeText(this, "EXCEPTION kirim ke analyzer: ${e.message}", Toast.LENGTH_LONG).show()
+                }
                 isAnalyzing = false
             }
         }
