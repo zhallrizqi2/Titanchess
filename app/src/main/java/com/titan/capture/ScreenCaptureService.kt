@@ -194,11 +194,9 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener({ reader ->
             captureCounter++
+            updateNotification("Capture #$captureCounter diterima")
             if (captureCounter <= 5) {
                 Log.d(tag, "onImageAvailable terpanggil, hitungan ke-$captureCounter")
-                mainHandler.post {
-                    Toast.makeText(this, "Frame masuk #$captureCounter", Toast.LENGTH_SHORT).show()
-                }
             }
             try {
                 val now = System.currentTimeMillis()
@@ -218,10 +216,12 @@ class ScreenCaptureService : Service() {
 
                 lastAnalysisTime = now
                 isAnalyzing = true
+                updateNotification("Capture #$captureCounter -> mulai analisis...")
                 sendBitmapToAnalyzer(bitmap)
 
             } catch (e: Exception) {
                 Log.e(tag, "Error saat proses image", e)
+                updateNotification("ERROR proses image: ${e.message}")
                 isAnalyzing = false
             }
         }, mainHandler)
@@ -232,11 +232,11 @@ class ScreenCaptureService : Service() {
             try {
                 val currentWebView = webView
                 if (currentWebView == null) {
-                    Toast.makeText(this, "WEBVIEW MASIH NULL, belum siap!", Toast.LENGTH_LONG).show()
+                    updateNotification("WEBVIEW MASIH NULL, belum siap!")
                     isAnalyzing = false
                     return@post
                 }
-                Toast.makeText(this, "Mengirim capture ke analyzer...", Toast.LENGTH_SHORT).show()
+                updateNotification("Mengirim ke WebView analyzer...")
                 val outputStream = ByteArrayOutputStream()
                 bitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)
                 val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
@@ -244,13 +244,13 @@ class ScreenCaptureService : Service() {
                 currentWebView.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
                     Log.d(tag, "evaluateJavascript callback: $result")
                     mainHandler.post {
-                        Toast.makeText(this, "JS callback: $result", Toast.LENGTH_LONG).show()
+                        updateNotification("JS callback diterima: $result")
                     }
                 }
             } catch (e: Exception) {
                 Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
                 mainHandler.post {
-                    Toast.makeText(this, "EXCEPTION kirim ke analyzer: ${e.message}", Toast.LENGTH_LONG).show()
+                    updateNotification("EXCEPTION kirim ke analyzer: ${e.message}")
                 }
                 isAnalyzing = false
             }
