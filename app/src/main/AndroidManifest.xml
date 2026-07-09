@@ -20,6 +20,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".CalibrationActivity"
+            android:exported="false" />
+
         <service
             android:name=".ScreenCaptureService"
             android:enabled="true"
