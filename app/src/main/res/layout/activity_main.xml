@@ -26,4 +26,11 @@
         android:layout_marginTop="16dp"
         android:text="Test Model (Smoke Test)" />
 
+    <Button
+        android:id="@+id/btnCalibrate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Atur Area Papan" />
+
 </LinearLayout>
