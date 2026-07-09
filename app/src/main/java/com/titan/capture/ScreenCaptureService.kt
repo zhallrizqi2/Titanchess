@@ -207,7 +207,6 @@ class ScreenCaptureService : Service() {
                         Toast.makeText(this, "JS callback: $result", Toast.LENGTH_LONG).show()
                     }
                 }
-                }
             } catch (e: Exception) {
                 Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
                 isAnalyzing = false
