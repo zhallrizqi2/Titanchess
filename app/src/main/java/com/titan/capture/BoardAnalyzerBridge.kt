@@ -27,12 +27,16 @@ class BoardAnalyzerBridge(private val context: Context) {
     fun onError(message: String) {
         Log.e(tag, "Error dari WebView: $message")
         mainHandler.post {
-            Toast.makeText(context, "Error analisis: $message", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "Error WebView: $message", Toast.LENGTH_LONG).show()
+            onFenReady?.invoke("ERROR")
         }
     }
 
     @JavascriptInterface
     fun onLog(message: String) {
         Log.d(tag, "WebView log: $message")
+        mainHandler.post {
+            Toast.makeText(context, "Log: $message", Toast.LENGTH_SHORT).show()
+        }
     }
 }
