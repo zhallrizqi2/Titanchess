@@ -16,10 +16,18 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Base64
 import android.util.DisplayMetrics
 import android.util.Log
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import androidx.webkit.WebViewAssetLoader
+import java.io.ByteArrayOutputStream
 
 class ScreenCaptureService : Service() {
 
@@ -31,14 +39,56 @@ class ScreenCaptureService : Service() {
     private val channelId = "titan_capture_channel"
     private val tag = "TitanCapture"
 
+    private var webView: WebView? = null
+    private var bridge: BoardAnalyzerBridge? = null
+    private var isAnalyzing = false
+    private var lastAnalysisTime = 0L
+    private val analysisIntervalMs = 2500L
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        mainHandler.post { setupWebView() }
+    }
+
+    private fun setupWebView() {
+        val view = WebView(this)
+        val settings: WebSettings = view.settings
+        settings.javaScriptEnabled = true
+        settings.allowFileAccess = true
+        settings.domStorageEnabled = true
+
+        val assetLoader = WebViewAssetLoader.Builder()
+            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            .build()
+
+        view.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                v: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                return assetLoader.shouldInterceptRequest(request.url)
+            }
+        }
+
+        val b = BoardAnalyzerBridge(this)
+        b.onFenReady = { fen -> handleFenResult(fen) }
+        view.addJavascriptInterface(b, "AndroidBridge")
+        view.loadUrl("https://appassets.androidplatform.net/assets/index.html")
+
+        webView = view
+        bridge = b
+    }
+
+    private fun handleFenResult(fen: String) {
+        isAnalyzing = false
+        Log.i(tag, "FEN baru: $fen")
+        updateNotification("FEN: $fen")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         try {
-            startForeground(1, buildNotification())
+            startForeground(1, buildNotification("Menganalisis papan catur di layar"))
         } catch (e: Exception) {
             logAndToast("Gagal startForeground: ${e.message}")
             stopSelf()
@@ -109,15 +159,42 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener({ reader ->
             try {
+                val now = System.currentTimeMillis()
                 val image = reader.acquireLatestImage()
-                image?.let {
-                    val bitmap = imageToBitmap(it, width, height)
-                    it.close()
+                if (image == null) return@setOnImageAvailableListener
+
+                if (isAnalyzing || (now - lastAnalysisTime) < analysisIntervalMs) {
+                    image.close()
+                    return@setOnImageAvailableListener
                 }
+
+                val bitmap = imageToBitmap(image, width, height)
+                image.close()
+
+                lastAnalysisTime = now
+                isAnalyzing = true
+                sendBitmapToAnalyzer(bitmap)
+
             } catch (e: Exception) {
                 Log.e(tag, "Error saat proses image", e)
+                isAnalyzing = false
             }
-        }, null)
+        }, mainHandler)
+    }
+
+    private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
+        mainHandler.post {
+            try {
+                val outputStream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)
+                val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+                val dataUrl = "data:image/png;base64,$base64"
+                webView?.evaluateJavascript("analyzeImage('$dataUrl')", null)
+            } catch (e: Exception) {
+                Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
+                isAnalyzing = false
+            }
+        }
     }
 
     private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap {
@@ -146,12 +223,17 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("Titan Chess aktif")
-            .setContentText("Menganalisis papan catur di layar")
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .build()
+    }
+
+    private fun updateNotification(text: String) {
+        val notification = buildNotification(text)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, notification)
     }
 
     private fun logAndToast(message: String) {
@@ -165,6 +247,7 @@ class ScreenCaptureService : Service() {
         virtualDisplay?.release()
         imageReader?.close()
         mediaProjection?.stop()
+        webView?.destroy()
         super.onDestroy()
     }
 
