@@ -194,15 +194,13 @@ class ScreenCaptureService : Service() {
 
         imageReader?.setOnImageAvailableListener({ reader ->
             captureCounter++
-            updateNotification("Capture #$captureCounter diterima")
-            if (captureCounter <= 5) {
+            if (captureCounter % 100 == 0) {
                 Log.d(tag, "onImageAvailable terpanggil, hitungan ke-$captureCounter")
             }
             try {
                 val now = System.currentTimeMillis()
                 val image = reader.acquireLatestImage()
                 if (image == null) {
-                    Log.d(tag, "acquireLatestImage() null")
                     return@setOnImageAvailableListener
                 }
 
