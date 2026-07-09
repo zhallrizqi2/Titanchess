@@ -154,3 +154,116 @@ class ScreenCaptureService : Service() {
             "TitanCapture",
             width, height, density,
             android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            imageReader?.surface,
+            null, null
+        )
+
+        imageReader?.setOnImageAvailableListener({ reader ->
+            captureCounter++
+            if (captureCounter <= 5) {
+                Log.d(tag, "onImageAvailable terpanggil, hitungan ke-$captureCounter")
+                mainHandler.post {
+                    Toast.makeText(this, "Frame masuk #$captureCounter", Toast.LENGTH_SHORT).show()
+                }
+            }
+            try {
+                val now = System.currentTimeMillis()
+                val image = reader.acquireLatestImage()
+                if (image == null) {
+                    Log.d(tag, "acquireLatestImage() null")
+                    return@setOnImageAvailableListener
+                }
+
+                if (isAnalyzing || (now - lastAnalysisTime) < analysisIntervalMs) {
+                    image.close()
+                    return@setOnImageAvailableListener
+                }
+
+                val bitmap = imageToBitmap(image, width, height)
+                image.close()
+
+                lastAnalysisTime = now
+                isAnalyzing = true
+                sendBitmapToAnalyzer(bitmap)
+
+            } catch (e: Exception) {
+                Log.e(tag, "Error saat proses image", e)
+                isAnalyzing = false
+            }
+        }, mainHandler)
+    }
+
+    private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
+        mainHandler.post {
+            try {
+                Toast.makeText(this, "Mengirim capture ke analyzer...", Toast.LENGTH_SHORT).show()
+                val outputStream = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 90, outputStream)
+                val base64 = Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+                val dataUrl = "data:image/png;base64,$base64"
+                webView?.evaluateJavascript("analyzeImage('$dataUrl')") { result ->
+                    Log.d(tag, "evaluateJavascript callback: $result")
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "Gagal kirim bitmap ke analyzer", e)
+                isAnalyzing = false
+            }
+        }
+    }
+
+    private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap {
+        val planes = image.planes
+        val buffer = planes[0].buffer
+        val pixelStride = planes[0].pixelStride
+        val rowStride = planes[0].rowStride
+        val rowPadding = rowStride - pixelStride * width
+
+        val bitmap = Bitmap.createBitmap(
+            width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+        )
+        bitmap.copyPixelsFromBuffer(buffer)
+        return Bitmap.createBitmap(bitmap, 0, 0, width, height)
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Titan Capture Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(text: String): Notification {
+        return NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Titan Chess aktif")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .build()
+    }
+
+    private fun updateNotification(text: String) {
+        val notification = buildNotification(text)
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(1, notification)
+    }
+
+    private fun logAndToast(message: String) {
+        Log.e(tag, message)
+        mainHandler.post {
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    override fun onDestroy() {
+        virtualDisplay?.release()
+        imageReader?.close()
+        mediaProjection?.stop()
+        webView?.destroy()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+}
