@@ -75,10 +75,44 @@ class ScreenCaptureService : Service() {
         val b = BoardAnalyzerBridge(this)
         b.onFenReady = { fen -> handleFenResult(fen) }
         view.addJavascriptInterface(b, "AndroidBridge")
+
+        attachWebViewToWindow(view)
+
         view.loadUrl("https://appassets.androidplatform.net/assets/index.html")
 
         webView = view
         bridge = b
+    }
+
+    private fun attachWebViewToWindow(view: WebView) {
+        if (!android.provider.Settings.canDrawOverlays(this)) {
+            logAndToast("Izin 'Tampil di atas aplikasi lain' belum diberikan! WebView tidak akan berfungsi.")
+            return
+        }
+
+        try {
+            val windowManager = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+            val overlayType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                android.view.WindowManager.LayoutParams.TYPE_PHONE
+            }
+
+            val params = android.view.WindowManager.LayoutParams(
+                1, 1,
+                overlayType,
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                android.graphics.PixelFormat.TRANSLUCENT
+            )
+            windowManager.addView(view, params)
+            Log.i(tag, "WebView berhasil di-attach ke WindowManager")
+        } catch (e: Exception) {
+            logAndToast("Gagal attach WebView ke window: ${e.message}")
+            Log.e(tag, "attachWebViewToWindow error", e)
+        }
     }
 
     private fun handleFenResult(fen: String) {
@@ -273,6 +307,14 @@ class ScreenCaptureService : Service() {
         virtualDisplay?.release()
         imageReader?.close()
         mediaProjection?.stop()
+        try {
+            webView?.let {
+                val windowManager = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+                windowManager.removeView(it)
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal remove WebView dari window", e)
+        }
         webView?.destroy()
         super.onDestroy()
     }
