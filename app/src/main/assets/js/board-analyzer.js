@@ -49,17 +49,17 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
-// --- PERBAIKAN TOTAL KLASIFIKASI MENGGUNAKAN UNIFORM TENSOR ---
+// --- FUNGSI UTAMA KLAFISIKASI 2D YANG SUDAH DISINKRONKAN ---
 async function classifyAllSquares(allSquaresGray) {
   const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
   const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
 
   if (!loggedInputNames) {
     loggedInputNames = true;
-    logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
+    logToAndroid("Menggunakan Input Node Berorientasi 2D: " + pixelInputName);
   }
 
-  // Siapkan array flat untuk menampung seluruh piksel (64 petak * 32 baris * 32 kolom)
+  // Bentuk flat array sesuai kebutuhan eksak model [64, 1024]
   const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
   
   for (let b = 0; b < 64; b++) {
@@ -71,24 +71,14 @@ async function classifyAllSquares(allSquaresGray) {
 
   const outputTensor = tf.tidy(() => {
     const keepProb = tf.scalar(1.0);
-    let input;
-    let inputDict = {};
+    const inputDict = {};
 
-    // Kita buat tensor 4D [batch, height, width, channels] -> [64, 32, 32, 1]
-    // Ini adalah format paling standar yang digunakan saat melatih model klasifikasi gambar catur
-    try {
-      input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
-      inputDict[pixelInputName] = input;
-      if (keepInputName) inputDict[keepInputName] = keepProb;
-      return pieceModel.execute(inputDict);
-    } catch (e) {
-      logToAndroid("Fallback ke Tensor 2D karena gagal execute 4D: " + e.message);
-      input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
-      inputDict = {};
-      inputDict[pixelInputName] = input;
-      if (keepInputName) inputDict[keepInputName] = keepProb;
-      return pieceModel.execute(inputDict);
-    }
+    // Langsung buat tensor 2D [64, 1024] tanpa mencoba 4D lagi agar tidak memicu error/fallback
+    const input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
+    inputDict[pixelInputName] = input;
+    if (keepInputName) inputDict[keepInputName] = keepProb;
+    
+    return pieceModel.execute(inputDict);
   });
 
   const predictionsData = await outputTensor.data();
@@ -164,7 +154,7 @@ async function imageToFen(dataUrl) {
   
   const squaresOrdered = [];
 
-  // Loop normal dari baris atas ke baris bawah (A8 ke H1)
+  // Loop baris 0 s.d 7 (Papan Atas ke Bawah)
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
@@ -185,9 +175,18 @@ async function imageToFen(dataUrl) {
       const { data } = imgData;
       const gray = new Float32Array(SQUARE_SIZE * SQUARE_SIZE);
       
-      for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
-        // Normalisasi piksel ke skala 0.0 - 1.0
-        gray[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255.0;
+      // PERBAIKAN: Membaca piksel per baris secara terbalik (Y-Invert) 
+      // yang merupakan standar input array datar pada model Python Keras konversi
+      for (let y = 0; y < SQUARE_SIZE; y++) {
+        // Balik urutan baris internal petak (SQUARE_SIZE - 1 - y)
+        const targetY = SQUARE_SIZE - 1 - y; 
+        for (let x = 0; x < SQUARE_SIZE; x++) {
+          const srcIdx = (y * SQUARE_SIZE + x) * 4;
+          const destIdx = targetY * SQUARE_SIZE + x;
+          
+          // Nilai piksel grayscale murni 0 - 255 tanpa dibagi 255.0
+          gray[destIdx] = (0.299 * data[srcIdx] + 0.587 * data[srcIdx + 1] + 0.114 * data[srcIdx + 2]);
+        }
       }
 
       squaresOrdered.push(gray);
