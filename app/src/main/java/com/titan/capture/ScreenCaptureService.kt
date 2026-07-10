@@ -380,18 +380,19 @@ class ScreenCaptureService : Service() {
     }
 
     private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap {
-        val planes = image.planes
-        val buffer = planes[0].buffer
-        val pixelStride = planes[0].pixelStride
-        val rowStride = planes[0].rowStride
-        val rowPadding = rowStride - pixelStride * width
+    val planes = image.planes
+    val buffer = planes[0].buffer
+    val pixelStride = planes[0].pixelStride
+    val rowStride = planes[0].rowStride
 
-        val bitmap = Bitmap.createBitmap(
-            width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
-        )
-        bitmap.copyPixelsFromBuffer(buffer)
-        return Bitmap.createBitmap(bitmap, 0, 0, width, height)
-    }
+    // Gunakan alokasi buffer yang bersih dan potong berdasarkan stride baris yang tepat
+    val bitmap = Bitmap.createBitmap(rowStride / pixelStride, height, Bitmap.Config.ARGB_8888)
+    bitmap.copyPixelsFromBuffer(buffer)
+    
+    // Potong balik ke ukuran murni resolusi layar HP kamu tanpa membawa sampah memori samping
+    return Bitmap.createBitmap(bitmap, 0, 0, width, height)
+}
+
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
