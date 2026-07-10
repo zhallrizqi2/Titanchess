@@ -57,7 +57,7 @@ function getSquareGrayscaleFloat32(ctx, col, row, squareW, squareH) {
     const r = data[i * 4];
     const g = data[i * 4 + 1];
     const b = data[i * 4 + 2];
-    gray[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    gray[i] = 0.299 * r + 0.587 * g + 0.114 * b;
   }
   return gray;
 }
@@ -142,7 +142,7 @@ async function imageToFen(dataUrl) {
       rowPieces.push(label);
     }
     board.push(rowPieces);
-    logToAndroid("Baris " + (r+1) + "/8 selesai");
+    logToAndroid("Baris " + (r + 1) + "/8 selesai");
   }
 
   return boardToFen(board, true);
