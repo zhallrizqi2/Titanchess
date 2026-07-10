@@ -327,30 +327,22 @@ class ScreenCaptureService : Service() {
         }
     }
 
+    // --- SEKARANG DI-UPDATE DENGAN AUTO-CROP KOTAK SEMPURNA ---
     private fun applyCropIfEnabled(bitmap: Bitmap): Bitmap {
-    // KITA BYPASS KALIBRASI MANUAL KARENA SERING MELESET KOORDINATNYA
-    // Papan catur di Chess.com mobile selalu berformat Kotak Sempurna (Square)
-    // dengan lebar memenuhi layar ponsel (lebar papan = bitmap.width)
-    
-    val boardSize = bitmap.width 
-    
-    // Cari titik tengah vertikal layar ponsel, lalu potong area tengahnya
-    // Umumnya papan catur berada di tengah layar pada orientasi portrait
-    val startY = if (bitmap.height > bitmap.width) {
-        (bitmap.height - bitmap.width) / 2
-    } else {
-        0
-    }
+        val boardSize = bitmap.width 
+        
+        val startY = if (bitmap.height > bitmap.width) {
+            (bitmap.height - bitmap.width) / 2
+        } else {
+            0
+        }
 
-    return try {
-        // Potong gambar otomatis menjadi kotak sempurna tepat di tengah layar
-        Bitmap.createBitmap(bitmap, 0, startY, boardSize, boardSize)
-    } catch (e: Exception) {
-        Log.e(tag, "Gagal auto-crop tengah, pakai full frame", e)
-        bitmap
-    }
-    }
-    
+        return try {
+            Bitmap.createBitmap(bitmap, 0, startY, boardSize, boardSize)
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal auto-crop tengah, pakai full frame", e)
+            bitmap
+        }
     }
 
     private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
@@ -385,11 +377,12 @@ class ScreenCaptureService : Service() {
         val buffer = planes[0].buffer
         val pixelStride = planes[0].pixelStride
         val rowStride = planes[0].rowStride
+        val rowPadding = rowStride - pixelStride * width
 
-        // PERBAIKAN: Membuat alokasi ukuran baris yang presisi agar data pixel tidak miring terdistorsi rowPadding
-        val bitmap = Bitmap.createBitmap(rowStride / pixelStride, height, Bitmap.Config.ARGB_8888)
+        val bitmap = Bitmap.createBitmap(
+            width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
+        )
         bitmap.copyPixelsFromBuffer(buffer)
-        
         return Bitmap.createBitmap(bitmap, 0, 0, width, height)
     }
 
