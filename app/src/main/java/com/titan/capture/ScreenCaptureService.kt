@@ -328,19 +328,29 @@ class ScreenCaptureService : Service() {
     }
 
     private fun applyCropIfEnabled(bitmap: Bitmap): Bitmap {
-        // --- MODE OTOMATIS: MEMOTONG PERSEGI TENGAH LAYAR HP SECARA MANDIRI ---
-        val width = bitmap.width
-        val height = bitmap.height
-        val boardSize = width 
-        val startY = if (height > width) (height - width) / 2 else 0
+    // KITA BYPASS KALIBRASI MANUAL KARENA SERING MELESET KOORDINATNYA
+    // Papan catur di Chess.com mobile selalu berformat Kotak Sempurna (Square)
+    // dengan lebar memenuhi layar ponsel (lebar papan = bitmap.width)
+    
+    val boardSize = bitmap.width 
+    
+    // Cari titik tengah vertikal layar ponsel, lalu potong area tengahnya
+    // Umumnya papan catur berada di tengah layar pada orientasi portrait
+    val startY = if (bitmap.height > bitmap.width) {
+        (bitmap.height - bitmap.width) / 2
+    } else {
+        0
+    }
 
-        return try {
-            Log.d(tag, "Auto-crop aktif: Mengambil kotak $boardSize x $boardSize dari Y=$startY")
-            Bitmap.createBitmap(bitmap, 0, startY, boardSize, boardSize)
-        } catch (e: Exception) {
-            Log.e(tag, "Gagal melakukan auto-crop", e)
-            bitmap
-        }
+    return try {
+        // Potong gambar otomatis menjadi kotak sempurna tepat di tengah layar
+        Bitmap.createBitmap(bitmap, 0, startY, boardSize, boardSize)
+    } catch (e: Exception) {
+        Log.e(tag, "Gagal auto-crop tengah, pakai full frame", e)
+        bitmap
+    }
+    }
+    
     }
 
     private fun sendBitmapToAnalyzer(bitmap: Bitmap) {
