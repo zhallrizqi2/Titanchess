@@ -226,4 +226,4 @@ async function analyzeImage(dataUrl) {
 window.addEventListener("load", () => {
   logToAndroid("WebView halaman dimuat, siap analisis");
 });
-  
+    
