@@ -147,6 +147,7 @@ class ScreenCaptureService : Service() {
 
         val b = BoardAnalyzerBridge(this)
         b.onFenReady = { fen -> handleFenResult(fen) }
+        b.onLogMessage = { msg -> updateNotification("Log: $msg") }
         view.addJavascriptInterface(b, "AndroidBridge")
 
         attachWebViewToWindow(view)
