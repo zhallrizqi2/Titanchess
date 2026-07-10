@@ -140,25 +140,25 @@ async function imageToFen(dataUrl) {
   logToAndroid("Model siap, memproses gambar...");
   const img = await loadImageFromDataUrl(dataUrl);
 
+  // Buat canvas offscreen sesuai ukuran asli gambar yang dikirim oleh Android
   const canvas = document.createElement("canvas");
-  const boardSize = img.width; 
-  canvas.width = boardSize;
-  canvas.height = boardSize;
+  canvas.width = img.width;
+  canvas.height = img.height;
   const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
 
-  // Normalisasi gambar persegi
-  const offsetY = img.height > img.width ? Math.floor((img.height - img.width) / 2) : 0;
-  ctx.drawImage(img, 0, offsetY, boardSize, boardSize, 0, 0, boardSize, boardSize);
+  logToAndroid(`Membaca resolusi asli Android: ${img.width}x${img.height}`);
 
-  logToAndroid(`Sinkronisasi dimensi: Selesai di-resize ke ${boardSize}x${boardSize}`);
-
-  const squareW = boardSize / 8;
-  const squareH = boardSize / 8;
+  // --- PERBAIKAN: Bagi 8 secara dinamis sesuai resolusi asli potongan Android ---
+  const squareW = img.width / 8;
+  const squareH = img.height / 8;
   const allSquaresGray = [];
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
+      
+      // Potong petak langsung dari koordinat gambar asli tanpa offset buatan
       memoryCtx.drawImage(
         canvas,
         c * squareW,
