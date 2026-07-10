@@ -40,3 +40,4 @@ class BoardAnalyzerBridge(private val context: Context) {
             onLogMessage?.invoke(message)
         }
     }
+}
