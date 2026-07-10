@@ -13,6 +13,7 @@ class BoardAnalyzerBridge(private val context: Context) {
     private val tag = "TitanCapture"
 
     var onFenReady: ((String) -> Unit)? = null
+    var onLogMessage: ((String) -> Unit)? = null
 
     @JavascriptInterface
     fun onFenResult(fen: String) {
@@ -36,7 +37,6 @@ class BoardAnalyzerBridge(private val context: Context) {
     fun onLog(message: String) {
         Log.d(tag, "WebView log: $message")
         mainHandler.post {
-            Toast.makeText(context, "Log: $message", Toast.LENGTH_SHORT).show()
+            onLogMessage?.invoke(message)
         }
     }
-}
