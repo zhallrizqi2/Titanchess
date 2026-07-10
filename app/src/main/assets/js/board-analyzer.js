@@ -150,25 +150,31 @@ async function imageToFen(dataUrl) {
   logToAndroid("Model siap, memproses gambar...");
   const img = await loadImageFromDataUrl(dataUrl);
 
-  // Buat canvas offscreen sesuai ukuran asli gambar yang dikirim oleh Android
   const canvas = document.createElement("canvas");
-  canvas.width = img.width;
-  canvas.height = img.height;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
 
-  logToAndroid(`Membaca resolusi asli Android: ${img.width}x${img.height}`);
+  // --- AUTO-CROP STRATEGI UNTUK SCREENSHOT SATU LAYAR FULL ---
+  // Umumnya papan catur di mobile memenuhi lebar layar (img.width)
+  // dan posisinya agak ke tengah secara vertikal.
+  const boardSize = img.width; 
+  canvas.width = boardSize;
+  canvas.height = boardSize;
 
-  // --- PERBAIKAN: Bagi 8 secara dinamis sesuai resolusi asli potongan Android ---
-  const squareW = img.width / 8;
-  const squareH = img.height / 8;
+  // Cari posisi tengah layar untuk memotong area catur secara pas
+  // Jika gambar memanjang ke bawah (portrait), kita ambil potongan tengah vertikalnya
+  const startY = img.height > img.width ? Math.floor((img.height - img.width) / 2) : 0;
+
+  ctx.drawImage(img, 0, startY, boardSize, boardSize, 0, 0, boardSize, boardSize);
+  logToAndroid(`Auto-Crop dari Layar Full: Mengambil area ${boardSize}x${boardSize} mulai dari Y=${startY}`);
+
+  const squareW = boardSize / 8;
+  const squareH = boardSize / 8;
   const allSquaresGray = [];
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
       
-      // Potong petak langsung dari koordinat gambar asli tanpa offset buatan
       memoryCtx.drawImage(
         canvas,
         c * squareW,
@@ -203,6 +209,7 @@ async function imageToFen(dataUrl) {
 
   return boardToFen(board, true);
 }
+
 
 async function analyzeImage(dataUrl) {
   try {
