@@ -238,8 +238,6 @@ class ScreenCaptureService : Service() {
     }
 
     private fun setupVirtualDisplay() {
-        // Bersihkan dulu kalau ada virtual display/imageReader lama yang masih aktif
-        // (mencegah konflik kalau onStartCommand terpanggil lagi tanpa service di-restart)
         try {
             virtualDisplay?.release()
             imageReader?.close()
@@ -330,24 +328,17 @@ class ScreenCaptureService : Service() {
     }
 
     private fun applyCropIfEnabled(bitmap: Bitmap): Bitmap {
-        val prefs = getSharedPreferences("titan_prefs", MODE_PRIVATE)
-        val enabled = prefs.getBoolean("crop_enabled", false)
-        if (!enabled) return bitmap
-
-        val left = prefs.getFloat("crop_left", 0f)
-        val top = prefs.getFloat("crop_top", 0f)
-        val right = prefs.getFloat("crop_right", 1f)
-        val bottom = prefs.getFloat("crop_bottom", 1f)
-
-        val x = (left * bitmap.width).toInt().coerceIn(0, bitmap.width - 1)
-        val y = (top * bitmap.height).toInt().coerceIn(0, bitmap.height - 1)
-        val w = ((right - left) * bitmap.width).toInt().coerceIn(1, bitmap.width - x)
-        val h = ((bottom - top) * bitmap.height).toInt().coerceIn(1, bitmap.height - y)
+        // --- MODE OTOMATIS: MEMOTONG PERSEGI TENGAH LAYAR HP SECARA MANDIRI ---
+        val width = bitmap.width
+        val height = bitmap.height
+        val boardSize = width 
+        val startY = if (height > width) (height - width) / 2 else 0
 
         return try {
-            Bitmap.createBitmap(bitmap, x, y, w, h)
+            Log.d(tag, "Auto-crop aktif: Mengambil kotak $boardSize x $boardSize dari Y=$startY")
+            Bitmap.createBitmap(bitmap, 0, startY, boardSize, boardSize)
         } catch (e: Exception) {
-            Log.e(tag, "Gagal crop bitmap, pakai full frame", e)
+            Log.e(tag, "Gagal melakukan auto-crop", e)
             bitmap
         }
     }
@@ -380,19 +371,17 @@ class ScreenCaptureService : Service() {
     }
 
     private fun imageToBitmap(image: Image, width: Int, height: Int): Bitmap {
-    val planes = image.planes
-    val buffer = planes[0].buffer
-    val pixelStride = planes[0].pixelStride
-    val rowStride = planes[0].rowStride
+        val planes = image.planes
+        val buffer = planes[0].buffer
+        val pixelStride = planes[0].pixelStride
+        val rowStride = planes[0].rowStride
 
-    // Gunakan alokasi buffer yang bersih dan potong berdasarkan stride baris yang tepat
-    val bitmap = Bitmap.createBitmap(rowStride / pixelStride, height, Bitmap.Config.ARGB_8888)
-    bitmap.copyPixelsFromBuffer(buffer)
-    
-    // Potong balik ke ukuran murni resolusi layar HP kamu tanpa membawa sampah memori samping
-    return Bitmap.createBitmap(bitmap, 0, 0, width, height)
-}
-
+        // PERBAIKAN: Membuat alokasi ukuran baris yang presisi agar data pixel tidak miring terdistorsi rowPadding
+        val bitmap = Bitmap.createBitmap(rowStride / pixelStride, height, Bitmap.Config.ARGB_8888)
+        bitmap.copyPixelsFromBuffer(buffer)
+        
+        return Bitmap.createBitmap(bitmap, 0, 0, width, height)
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
