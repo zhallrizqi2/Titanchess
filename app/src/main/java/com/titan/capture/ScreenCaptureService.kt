@@ -237,6 +237,17 @@ class ScreenCaptureService : Service() {
     }
 
     private fun setupVirtualDisplay() {
+        // Bersihkan dulu kalau ada virtual display/imageReader lama yang masih aktif
+        // (mencegah konflik kalau onStartCommand terpanggil lagi tanpa service di-restart)
+        try {
+            virtualDisplay?.release()
+            imageReader?.close()
+        } catch (e: Exception) {
+            Log.e(tag, "Gagal cleanup display lama", e)
+        }
+        captureCounter = 0
+        isAnalyzing = false
+
         mediaProjection?.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
@@ -245,7 +256,6 @@ class ScreenCaptureService : Service() {
                 imageReader?.close()
             }
         }, mainHandler)
-
         val metrics = DisplayMetrics()
         val display = (getSystemService(DISPLAY_SERVICE) as DisplayManager)
             .getDisplay(android.view.Display.DEFAULT_DISPLAY)
