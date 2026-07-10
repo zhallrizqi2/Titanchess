@@ -50,7 +50,7 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
-// Fungsi memproses 64 petak sekaligus (Aman di CPU)
+// --- PERBAIKAN URUTAN ARRAY BATCH UNTUK FROZEN MODEL ---
 async function classifyAllSquares(allSquaresGray) {
   const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
   const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
@@ -60,9 +60,15 @@ async function classifyAllSquares(allSquaresGray) {
     logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
   }
 
+  // Alokasikan memori tepat 64 petak x 1024 pixel (32x32)
   const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
+  
+  // Gabungkan dengan urutan sekuensial yang murni per sub-array petak
   for (let i = 0; i < 64; i++) {
-    flatAllData.set(allSquaresGray[i], i * SQUARE_SIZE * SQUARE_SIZE);
+    const squareData = allSquaresGray[i];
+    for (let p = 0; p < 1024; p++) {
+      flatAllData[i * 1024 + p] = squareData[p];
+    }
   }
 
   const outputTensor = tf.tidy(() => {
@@ -71,11 +77,13 @@ async function classifyAllSquares(allSquaresGray) {
     let inputDict = {};
 
     try {
+      // Sesuai log kamu (pixelInput=Input), format utama biasanya berbentuk Flat 2D [64, 1024]
       input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
       return pieceModel.execute(inputDict);
     } catch (e) {
+      // Fallback jika model meminta format matriks gambar 4D [64, 32, 32, 1]
       input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
       inputDict = {};
       inputDict[pixelInputName] = input;
@@ -90,6 +98,7 @@ async function classifyAllSquares(allSquaresGray) {
   const numClasses = PIECE_LABELS.length;
   const labelsResult = [];
 
+  // Ambil hasil prediksi per petak dari total 64 baris data keluaran
   for (let b = 0; b < 64; b++) {
     let maxIdx = 0;
     let maxVal = -Infinity;
@@ -107,6 +116,7 @@ async function classifyAllSquares(allSquaresGray) {
 
   return labelsResult;
 }
+
 
 function boardToFen(board, whiteToMove = true) {
   const rows = [];
