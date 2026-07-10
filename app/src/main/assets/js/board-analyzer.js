@@ -1,149 +1,61 @@
-const SQUARE_SIZE = 32;
-const PIECE_LABELS = [
-  "empty", "wB", "wK", "wN", "wP", "wQ", "wR",
-  "bB", "bK", "bN", "bP", "bQ", "bR",
-];
+/**
+ * Titan Chess - Board Analyzer Engine
+ * Menggunakan TensorFlow.js untuk mendeteksi bidak catur dari gambar 8x8 petak otomatis
+ */
 
-let pieceModel = null;
-let loggedInputNames = false;
+// Konstanta Ukuran Input Model TensorFlow
+const SQUARE_SIZE = 32; 
+let model = null;
 
-// Canvas memori global untuk resize petak menjadi 32x32
+// Context memory canvas untuk manipulasi sub-petak gambar
 const memoryCanvas = document.createElement("canvas");
 memoryCanvas.width = SQUARE_SIZE;
 memoryCanvas.height = SQUARE_SIZE;
 const memoryCtx = memoryCanvas.getContext("2d");
 
-async function loadModels() {
-  if (!pieceModel) {
-    // --- PERBAIKAN UNTUK FULL ANDROID WEBVIEW ---
-    // Paksa menggunakan CPU untuk menghindari crash WebGL di WebView
-    try {
-      await tf.setBackend('cpu');
-      logToAndroid("Backend TensorFlow diatur ke: CPU");
-    } catch (err) {
-      logToAndroid("Gagal mengatur backend ke CPU: " + err.message);
-    }
-
-    pieceModel = await tf.loadFrozenModel(
-      "model/frozen_model/tensorflowjs_model.pb",
-      "model/frozen_model/weights_manifest.json"
-    );
-    logToAndroid("Model dimuat. inputNodes=" + JSON.stringify(pieceModel.inputNodes));
+/**
+ * Log Helper untuk mengirim pesan debug dari WebView ke Notification Android
+ */
+function logToAndroid(message) {
+  console.log(message);
+  if (window.AndroidBridge && typeof window.AndroidBridge.onLog === 'function') {
+    window.AndroidBridge.onLog(message);
   }
 }
 
-function logToAndroid(message) {
+/**
+ * Memuat Model TensorFlow.js (Aset Lokal)
+ */
+async function loadModels() {
+  if (model !== null) return;
   try {
-    if (window.AndroidBridge && window.AndroidBridge.onLog) {
-      window.AndroidBridge.onLog(String(message));
+    logToAndroid("Memuat model tf.loadLayersModel...");
+    // Mengarah ke folder assets lokal di Android wrapper
+    model = await tf.loadLayersModel("./model/model.json");
+    logToAndroid("Model TensorFlow berhasil dimuat!");
+  } catch (err) {
+    logToAndroid("Gagal memuat model: " + err.message);
+    if (window.AndroidBridge && typeof window.AndroidBridge.onError === 'function') {
+      window.AndroidBridge.onError("LoadModelError: " + err.message);
     }
-  } catch (e) {}
-  console.log(message);
+  }
 }
 
+/**
+ * Mengubah String Data URL / Base64 menjadi objek Image HTML5
+ */
 function loadImageFromDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Gagal memuat gambar dari Data URL"));
+    img.onerror = (err) => reject(err);
     img.src = dataUrl;
   });
 }
 
-// --- PERBAIKAN URUTAN ARRAY BATCH UNTUK FROZEN MODEL ---
-async function classifyAllSquares(allSquaresGray) {
-  const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
-  const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
-
-  if (!loggedInputNames) {
-    loggedInputNames = true;
-    logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
-  }
-
-  // Alokasikan memori tepat 64 petak x 1024 pixel (32x32)
-  const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
-  
-  // Gabungkan dengan urutan sekuensial yang murni per sub-array petak
-  for (let i = 0; i < 64; i++) {
-    const squareData = allSquaresGray[i];
-    for (let p = 0; p < 1024; p++) {
-      flatAllData[i * 1024 + p] = squareData[p];
-    }
-  }
-
-  const outputTensor = tf.tidy(() => {
-    const keepProb = tf.scalar(1.0);
-    let input;
-    let inputDict = {};
-
-    try {
-      // Sesuai log kamu (pixelInput=Input), format utama biasanya berbentuk Flat 2D [64, 1024]
-      input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
-      inputDict[pixelInputName] = input;
-      if (keepInputName) inputDict[keepInputName] = keepProb;
-      return pieceModel.execute(inputDict);
-    } catch (e) {
-      // Fallback jika model meminta format matriks gambar 4D [64, 32, 32, 1]
-      input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
-      inputDict = {};
-      inputDict[pixelInputName] = input;
-      if (keepInputName) inputDict[keepInputName] = keepProb;
-      return pieceModel.execute(inputDict);
-    }
-  });
-
-  const predictionsData = await outputTensor.data();
-  outputTensor.dispose();
-
-  const numClasses = PIECE_LABELS.length;
-  const labelsResult = [];
-
-  // Ambil hasil prediksi per petak dari total 64 baris data keluaran
-  for (let b = 0; b < 64; b++) {
-    let maxIdx = 0;
-    let maxVal = -Infinity;
-    const offset = b * numClasses;
-
-    for (let i = 0; i < numClasses; i++) {
-      const val = predictionsData[offset + i];
-      if (val > maxVal) {
-        maxVal = val;
-        maxIdx = i;
-      }
-    }
-    labelsResult.push(PIECE_LABELS[maxIdx]);
-  }
-
-  return labelsResult;
-}
-
-
-function boardToFen(board, whiteToMove = true) {
-  const rows = [];
-  for (let r = 0; r < 8; r++) {
-    let empty = 0;
-    let rowStr = "";
-    for (let c = 0; c < 8; c++) {
-      const piece = board[r][c];
-      if (piece === "empty") {
-        empty++;
-      } else {
-        if (empty > 0) {
-          rowStr += empty;
-          empty = 0;
-        }
-        const color = piece[0];
-        const type = piece[1];
-        rowStr += color === "w" ? type : type.toLowerCase();
-      }
-    }
-    if (empty > 0) rowStr += empty;
-    rows.push(rowStr);
-  }
-  const placement = rows.join("/");
-  return `${placement} ${whiteToMove ? "w" : "b"} - - 0 1`;
-}
-
+/**
+ * Fungsi Utama: Memproses Gambar dari Kotlin dan Mengonversinya Menjadi FEN
+ */
 async function imageToFen(dataUrl) {
   logToAndroid("imageToFen mulai, load model...");
   await loadModels();
@@ -151,30 +63,23 @@ async function imageToFen(dataUrl) {
   const img = await loadImageFromDataUrl(dataUrl);
 
   const canvas = document.createElement("canvas");
+  canvas.width = img.width;
+  canvas.height = img.height;
   const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0);
 
-  // --- AUTO-CROP STRATEGI UNTUK SCREENSHOT SATU LAYAR FULL ---
-  // Umumnya papan catur di mobile memenuhi lebar layar (img.width)
-  // dan posisinya agak ke tengah secara vertikal.
-  const boardSize = img.width; 
-  canvas.width = boardSize;
-  canvas.height = boardSize;
+  logToAndroid(`Menerima gambar Auto-Crop: ${img.width}x${img.height}`);
 
-  // Cari posisi tengah layar untuk memotong area catur secara pas
-  // Jika gambar memanjang ke bawah (portrait), kita ambil potongan tengah vertikalnya
-  const startY = img.height > img.width ? Math.floor((img.height - img.width) / 2) : 0;
-
-  ctx.drawImage(img, 0, startY, boardSize, boardSize, 0, 0, boardSize, boardSize);
-  logToAndroid(`Auto-Crop dari Layar Full: Mengambil area ${boardSize}x${boardSize} mulai dari Y=${startY}`);
-
-  const squareW = boardSize / 8;
-  const squareH = boardSize / 8;
+  // Karena gambar dari Kotlin sudah berupa kotak persegi murni 1:1, bagi koordinat secara rata 8x8
+  const squareW = img.width / 8;
+  const squareH = img.height / 8;
   const allSquaresGray = [];
 
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
       
+      // Potong sub-gambar per petak catur
       memoryCtx.drawImage(
         canvas,
         c * squareW,
@@ -191,6 +96,7 @@ async function imageToFen(dataUrl) {
       const { data } = imgData;
       const gray = new Float32Array(SQUARE_SIZE * SQUARE_SIZE);
       
+      // Formulasi ekstraksi warna grayscale (hitam putih) untuk input tensor
       for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
         gray[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255.0;
       }
@@ -210,25 +116,77 @@ async function imageToFen(dataUrl) {
   return boardToFen(board, true);
 }
 
+/**
+ * Melakukan Prediksi Batch Menggunakan Model TensorFlow untuk 64 Petak Sekaligus
+ */
+async function classifyAllSquares(allSquaresGray) {
+  // Daftar label output kelas sesuai urutan index model AI catur kamu
+  // Sesuaikan urutan array ini jika model kamu menggunakan indeks label berbeda!
+  const CLASSES = ["1", "B", "K", "N", "P", "Q", "R", "b", "k", "n", "p", "q", "r"];
+  const labels = [];
 
-async function analyzeImage(dataUrl) {
-  try {
-    const fen = await imageToFen(dataUrl);
-    if (window.AndroidBridge && window.AndroidBridge.onFenResult) {
-      window.AndroidBridge.onFenResult(fen);
+  tf.tidy(() => {
+    // Gabungkan 64 array petak menjadi satu bentuk matriks tensor batch [64, 32, 32, 1]
+    const tensors = allSquaresGray.map(gray => tf.tensor2d(gray, [SQUARE_SIZE, SQUARE_SIZE]).expandDims(-1));
+    const batchTensor = tf.stack(tensors);
+
+    // Jalankan kalkulasi prediksi AI
+    const predictions = model.predict(batchTensor);
+    const argmax = predictions.argMax(-1);
+    const indices = argmax.dataSync();
+
+    for (let i = 0; i < indices.length; i++) {
+      labels.push(CLASSES[indices[i]]);
     }
-  } catch (e) {
-    const errMsg = e && e.message ? e.message : String(e);
-    logToAndroid("ERROR UTAMA: " + errMsg);
-    
-    if (window.AndroidBridge && window.AndroidBridge.onFenResult) {
-      // Kirim detail pesan error ke sistem notifikasi Android biar kelihatan jelas errornya apa
-      window.AndroidBridge.onFenResult("ERROR: " + errMsg);
-    }
-  }
+  });
+
+  return labels;
 }
 
-window.addEventListener("load", () => {
-  logToAndroid("WebView halaman dimuat, siap analisis");
-});
-        
+/**
+ * Mengonversi Matriks Array 2D Bidak Menjadi String Notasi FEN Standar Catur
+ */
+function boardToFen(board, activeColorWhite = true) {
+  const fenRows = [];
+  for (let r = 0; r < 8; r++) {
+    let emptyCount = 0;
+    let rowStr = "";
+    for (let c = 0; c < 8; c++) {
+      const p = board[r][c];
+      if (p === "1" || p === "empty" || !p) {
+        emptyCount++;
+      } else {
+        if (emptyCount > 0) {
+          rowStr += emptyCount;
+          emptyCount = 0;
+        }
+        rowStr += p;
+      }
+    }
+    if (emptyCount > 0) {
+      rowStr += emptyCount;
+    }
+    fenRows.push(rowStr);
+  }
+  
+  const turn = activeColorWhite ? "w" : "b";
+  return fenRows.join("/") + ` ${turn} - - 0 1`;
+}
+
+/**
+ * Fungsi Jembatan Global yang dipanggil langsung oleh evaluateJavascript dari Android Kotlin
+ */
+async function analyzeImage(dataUrl) {
+  try {
+    const fenResult = await imageToFen(dataUrl);
+    logToAndroid("Analisis sukses! Mengirim FEN ke Android...");
+    if (window.AndroidBridge && typeof window.AndroidBridge.onFenResult === 'function') {
+      window.AndroidBridge.onFenResult(fenResult);
+    }
+  } catch (err) {
+    logToAndroid("Gagal memproses analyzeImage: " + err.message);
+    if (window.AndroidBridge && typeof window.AndroidBridge.onError === 'function') {
+      window.AndroidBridge.onError(err.message);
+    }
+  }
+        }
