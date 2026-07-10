@@ -257,6 +257,7 @@ class ScreenCaptureService : Service() {
                 imageReader?.close()
             }
         }, mainHandler)
+
         val metrics = DisplayMetrics()
         val display = (getSystemService(DISPLAY_SERVICE) as DisplayManager)
             .getDisplay(android.view.Display.DEFAULT_DISPLAY)
