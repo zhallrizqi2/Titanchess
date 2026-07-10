@@ -15,6 +15,15 @@ const memoryCtx = memoryCanvas.getContext("2d");
 
 async function loadModels() {
   if (!pieceModel) {
+    // --- PERBAIKAN UNTUK FULL ANDROID WEBVIEW ---
+    // Paksa menggunakan CPU untuk menghindari crash WebGL di WebView
+    try {
+      await tf.setBackend('cpu');
+      logToAndroid("Backend TensorFlow diatur ke: CPU");
+    } catch (err) {
+      logToAndroid("Gagal mengatur backend ke CPU: " + err.message);
+    }
+
     pieceModel = await tf.loadFrozenModel(
       "model/frozen_model/tensorflowjs_model.pb",
       "model/frozen_model/weights_manifest.json"
@@ -36,45 +45,13 @@ function loadImageFromDataUrl(dataUrl) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onerror = () => reject(new Error("Gagal memuat gambar dari Data URL"));
     img.src = dataUrl;
   });
 }
 
-function getSquareGrayscaleFloat32(mainCtx, col, row, squareW, squareH) {
-  memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
-  
-  // Potong dari gambar catur hasil crop Android
-  memoryCtx.drawImage(
-    mainCtx.canvas,
-    col * squareW,
-    row * squareH,
-    squareW,
-    squareH,
-    0,
-    0,
-    SQUARE_SIZE,
-    SQUARE_SIZE
-  );
-  
-  const imgData = memoryCtx.getImageData(0, 0, SQUARE_SIZE, SQUARE_SIZE);
-  const { data } = imgData;
-  const gray = new Float32Array(SQUARE_SIZE * SQUARE_SIZE);
-  
-  for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
-    const r = data[i * 4];
-    const g = data[i * 4 + 1];
-    const b = data[i * 4 + 2];
-    
-    // --- PERBAIKAN: Hitung grayscale dan bagi 255 untuk normalisasi (skala 0.0 - 1.0) ---
-    const grayValue = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-    
-    gray[i] = grayValue;
-  }
-  return gray;
-}
-
-async function classifySquare(grayFloat32) {
+// Fungsi memproses 64 petak sekaligus (Aman di CPU)
+async function classifyAllSquares(allSquaresGray) {
   const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
   const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
 
@@ -83,43 +60,52 @@ async function classifySquare(grayFloat32) {
     logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
   }
 
+  const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
+  for (let i = 0; i < 64; i++) {
+    flatAllData.set(allSquaresGray[i], i * SQUARE_SIZE * SQUARE_SIZE);
+  }
+
   const outputTensor = tf.tidy(() => {
     const keepProb = tf.scalar(1.0);
     let input;
     let inputDict = {};
 
     try {
-      input = tf.tensor2d(grayFloat32, [1, SQUARE_SIZE * SQUARE_SIZE]);
+      input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
-      
       return pieceModel.execute(inputDict);
     } catch (e) {
-      input = tf.tensor4d(grayFloat32, [1, SQUARE_SIZE, SQUARE_SIZE, 1]);
+      input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
       inputDict = {};
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
-      
       return pieceModel.execute(inputDict);
     }
   });
 
-  const data = await outputTensor.data();
+  const predictionsData = await outputTensor.data();
   outputTensor.dispose();
 
-  let maxIdx = 0;
-  let maxVal = -Infinity;
-  for (let i = 0; i < data.length; i++) {
-    if (data[i] > maxVal) {
-      maxVal = data[i];
-      maxIdx = i;
-    }
-  }
-  
-  // Opsi Debug: log ke Android untuk melihat distibusi probabilitas jika tebakan masih salah
-  // logToAndroid(`Prediksi Petak: kelas=${maxIdx} skor=${maxVal}`);
+  const numClasses = PIECE_LABELS.length;
+  const labelsResult = [];
 
-  return PIECE_LABELS[maxIdx];
+  for (let b = 0; b < 64; b++) {
+    let maxIdx = 0;
+    let maxVal = -Infinity;
+    const offset = b * numClasses;
+
+    for (let i = 0; i < numClasses; i++) {
+      const val = predictionsData[offset + i];
+      if (val > maxVal) {
+        maxVal = val;
+        maxIdx = i;
+      }
+    }
+    labelsResult.push(PIECE_LABELS[maxIdx]);
+  }
+
+  return labelsResult;
 }
 
 function boardToFen(board, whiteToMove = true) {
@@ -151,37 +137,25 @@ function boardToFen(board, whiteToMove = true) {
 async function imageToFen(dataUrl) {
   logToAndroid("imageToFen mulai, load model...");
   await loadModels();
-  logToAndroid("Model siap, load gambar hasil crop...");
+  logToAndroid("Model siap, memproses gambar...");
   const img = await loadImageFromDataUrl(dataUrl);
 
-  // Buat canvas memori secara dinamis untuk menampung perbaikan gambar
   const canvas = document.createElement("canvas");
-  
-  // Ambil lebar (width) sebagai acuan dasar persegi 1:1 papan catur
   const boardSize = img.width; 
-  
   canvas.width = boardSize;
   canvas.height = boardSize;
   const ctx = canvas.getContext("2d");
 
-  // Jika tinggi gambar lebih besar dari lebar (seperti kasus 666x738),
-  // potong bagian tengahnya dan buang sisa piksel yang meluber ke bawah/atas
+  // Normalisasi gambar persegi
   const offsetY = img.height > img.width ? Math.floor((img.height - img.width) / 2) : 0;
-  const offsetX = 0; 
+  ctx.drawImage(img, 0, offsetY, boardSize, boardSize, 0, 0, boardSize, boardSize);
 
-  ctx.drawImage(
-    img, 
-    offsetX, offsetY, boardSize, boardSize, // Potong area persegi dari gambar asli Android
-    0, 0, boardSize, boardSize             // Gambar ke canvas baru dengan skala pas 1:1
-  );
+  logToAndroid(`Sinkronisasi dimensi: Selesai di-resize ke ${boardSize}x${boardSize}`);
 
-  logToAndroid(`SINKRONISASI: Gambar disesuaikan dari ${img.width}x${img.height} menjadi persegi sempurna ${boardSize}x${boardSize}`);
-
-  // Karena gambar sudah dipaksa persegi 1:1, pembagian petak di bawah ini dijamin presisi
   const squareW = boardSize / 8;
   const squareH = boardSize / 8;
-
   const allSquaresGray = [];
+
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
@@ -208,9 +182,7 @@ async function imageToFen(dataUrl) {
     }
   }
 
-  logToAndroid("Ekstraksi petak selesai. Memulai prediksi batch...");
-  
-  // Menggunakan fungsi optimasi batching (memproses 64 petak sekaligus)
+  logToAndroid("Ekstraksi 64 petak selesai. Menjalankan TensorFlow...");
   const allLabels = await classifyAllSquares(allSquaresGray);
 
   const board = [];
@@ -222,7 +194,6 @@ async function imageToFen(dataUrl) {
   return boardToFen(board, true);
 }
 
-
 async function analyzeImage(dataUrl) {
   try {
     const fen = await imageToFen(dataUrl);
@@ -230,9 +201,12 @@ async function analyzeImage(dataUrl) {
       window.AndroidBridge.onFenResult(fen);
     }
   } catch (e) {
-    logToAndroid("ERROR analyzeImage: " + (e && e.message ? e.message : String(e)));
-    if (window.AndroidBridge && window.AndroidBridge.onError) {
-      window.AndroidBridge.onError(String(e && e.message ? e.message : e));
+    const errMsg = e && e.message ? e.message : String(e);
+    logToAndroid("ERROR UTAMA: " + errMsg);
+    
+    if (window.AndroidBridge && window.AndroidBridge.onFenResult) {
+      // Kirim detail pesan error ke sistem notifikasi Android biar kelihatan jelas errornya apa
+      window.AndroidBridge.onFenResult("ERROR: " + errMsg);
     }
   }
 }
@@ -240,4 +214,4 @@ async function analyzeImage(dataUrl) {
 window.addEventListener("load", () => {
   logToAndroid("WebView halaman dimuat, siap analisis");
 });
-    
+        
