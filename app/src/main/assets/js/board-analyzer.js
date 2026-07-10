@@ -62,17 +62,38 @@ function getSquareGrayscaleFloat32(ctx, col, row, squareW, squareH) {
   return gray;
 }
 
+let loggedInputNames = false;
+
 async function classifySquare(grayFloat32) {
-  const inputName = pieceModel.inputNodes.find((n) => n !== "KeepProb") || pieceModel.inputNodes[0];
+  const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
+  const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
+
+  if (!loggedInputNames) {
+    loggedInputNames = true;
+    logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
+  }
+
   const input = tf.tensor2d(grayFloat32, [1, SQUARE_SIZE * SQUARE_SIZE]);
   const keepProb = tf.scalar(1.0);
+
+  const inputDict = {};
+  inputDict[pixelInputName] = input;
+  if (keepInputName) {
+    inputDict[keepInputName] = keepProb;
+  }
+
   let output;
   try {
-    output = pieceModel.execute({ [inputName]: input, KeepProb: keepProb });
+    output = pieceModel.execute(inputDict);
   } catch (e) {
     input.dispose();
     const input4d = tf.tensor4d(grayFloat32, [1, SQUARE_SIZE, SQUARE_SIZE, 1]);
-    output = pieceModel.execute({ [inputName]: input4d, KeepProb: keepProb });
+    const inputDict4d = {};
+    inputDict4d[pixelInputName] = input4d;
+    if (keepInputName) {
+      inputDict4d[keepInputName] = keepProb;
+    }
+    output = pieceModel.execute(inputDict4d);
     input4d.dispose();
   }
   const data = await output.data();
