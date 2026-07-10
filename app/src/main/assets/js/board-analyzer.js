@@ -16,6 +16,7 @@ const memoryCtx = memoryCanvas.getContext("2d");
 async function loadModels() {
   if (!pieceModel) {
     // --- PERBAIKAN UNTUK FULL ANDROID WEBVIEW ---
+    // Paksa menggunakan CPU untuk menghindari crash WebGL di WebView
     try {
       await tf.setBackend('cpu');
       logToAndroid("Backend TensorFlow diatur ke: CPU");
@@ -49,6 +50,7 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
+// --- PERBAIKAN URUTAN ARRAY BATCH UNTUK FROZEN MODEL ---
 async function classifyAllSquares(allSquaresGray) {
   const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
   const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
@@ -58,8 +60,10 @@ async function classifyAllSquares(allSquaresGray) {
     logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
   }
 
+  // Alokasikan memori tepat 64 petak x 1024 pixel (32x32)
   const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
   
+  // Gabungkan dengan urutan sekuensial yang murni per sub-array petak
   for (let i = 0; i < 64; i++) {
     const squareData = allSquaresGray[i];
     for (let p = 0; p < 1024; p++) {
@@ -73,11 +77,13 @@ async function classifyAllSquares(allSquaresGray) {
     let inputDict = {};
 
     try {
+      // Sesuai log, format utama biasanya berbentuk Flat 2D [64, 1024]
       input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
       return pieceModel.execute(inputDict);
     } catch (e) {
+      // Fallback jika model meminta format matriks gambar 4D [64, 32, 32, 1]
       input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
       inputDict = {};
       inputDict[pixelInputName] = input;
@@ -92,6 +98,7 @@ async function classifyAllSquares(allSquaresGray) {
   const numClasses = PIECE_LABELS.length;
   const labelsResult = [];
 
+  // Ambil hasil prediksi per petak dari total 64 baris data keluaran
   for (let b = 0; b < 64; b++) {
     let maxIdx = 0;
     let maxVal = -Infinity;
@@ -136,7 +143,7 @@ function boardToFen(board, whiteToMove = true) {
   return `${placement} ${whiteToMove ? "w" : "b"} - - 0 1`;
 }
 
-// --- PERBAIKAN: SINKRONISASI URUTAN PETAK BERDASARKAN MODEL TRAINING ---
+// --- PERBAIKAN URUTAN DAN SINKRONISASI COORD DENGAN KOTLIN CROP ---
 async function imageToFen(dataUrl) {
   logToAndroid("imageToFen mulai, load model...");
   await loadModels();
@@ -146,22 +153,21 @@ async function imageToFen(dataUrl) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
 
+  // Kotlin sudah mengirim potongan pas seukuran catur dari CalibrationActivity
   const boardWidth = img.width;
   const boardHeight = img.height;
   
   canvas.width = boardWidth;
   canvas.height = boardHeight;
 
+  // Gambar langsung bidang catur utuh tanpa offset Y statis (+540)
   ctx.drawImage(img, 0, 0, boardWidth, boardHeight);
   logToAndroid(`Menggunakan gambar input ukuran: ${boardWidth}x${boardHeight}px`);
 
   const squareW = boardWidth / 8;
   const squareH = boardHeight / 8;
-  
-  // Array sementara untuk menampung 64 petak secara berurutan sesuai keinginan model
-  const squaresOrdered = new Array(64);
+  const allSquaresGray = [];
 
-  // Mengubah urutan ekstraksi petak agar sesuai dengan standar orientasi dataset catur
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
@@ -185,24 +191,16 @@ async function imageToFen(dataUrl) {
       for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
         gray[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255.0;
       }
-
-      // --- PERUBAHAN INDEKS: Membalikkan baris dari bawah (7 - r) ke atas ---
-      const modelIndex = (7 - r) * 8 + c;
-      squaresOrdered[modelIndex] = gray;
+      allSquaresGray.push(gray);
     }
   }
 
   logToAndroid("Ekstraksi 64 petak selesai. Menjalankan TensorFlow...");
-  const allLabelsOrdered = await classifyAllSquares(squaresOrdered);
+  const allLabels = await classifyAllSquares(allSquaresGray);
 
-  // Susun kembali hasil prediksi ke dalam struktur matriks 8x8 papan catur untuk FEN
   const board = [];
   for (let r = 0; r < 8; r++) {
-    const rowPieces = [];
-    for (let c = 0; c < 8; c++) {
-      const modelIndex = (7 - r) * 8 + c;
-      rowPieces.push(allLabelsOrdered[modelIndex]);
-    }
+    const rowPieces = allLabels.slice(r * 8, (r + 1) * 8);
     board.push(rowPieces);
   }
 
@@ -228,3 +226,4 @@ async function analyzeImage(dataUrl) {
 window.addEventListener("load", () => {
   logToAndroid("WebView halaman dimuat, siap analisis");
 });
+  
