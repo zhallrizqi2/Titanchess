@@ -154,31 +154,74 @@ async function imageToFen(dataUrl) {
   logToAndroid("Model siap, load gambar hasil crop...");
   const img = await loadImageFromDataUrl(dataUrl);
 
-  const canvas = document.getElementById("tv-work-canvas");
-  // Karena Android sudah memotongnya secara pas 1:1, kita gunakan resolusi asli gambar tersebut
-  canvas.width = img.width;
-  canvas.height = img.height;
+  // Buat canvas memori secara dinamis untuk menampung perbaikan gambar
+  const canvas = document.createElement("canvas");
+  
+  // Ambil lebar (width) sebagai acuan dasar persegi 1:1 papan catur
+  const boardSize = img.width; 
+  
+  canvas.width = boardSize;
+  canvas.height = boardSize;
   const ctx = canvas.getContext("2d");
-  ctx.drawImage(img, 0, 0);
 
-  // Bagi langsung menjadi 8 horizontal dan 8 vertikal
-  const squareW = img.width / 8;
-  const squareH = img.height / 8;
+  // Jika tinggi gambar lebih besar dari lebar (seperti kasus 666x738),
+  // potong bagian tengahnya dan buang sisa piksel yang meluber ke bawah/atas
+  const offsetY = img.height > img.width ? Math.floor((img.height - img.width) / 2) : 0;
+  const offsetX = 0; 
+
+  ctx.drawImage(
+    img, 
+    offsetX, offsetY, boardSize, boardSize, // Potong area persegi dari gambar asli Android
+    0, 0, boardSize, boardSize             // Gambar ke canvas baru dengan skala pas 1:1
+  );
+
+  logToAndroid(`SINKRONISASI: Gambar disesuaikan dari ${img.width}x${img.height} menjadi persegi sempurna ${boardSize}x${boardSize}`);
+
+  // Karena gambar sudah dipaksa persegi 1:1, pembagian petak di bawah ini dijamin presisi
+  const squareW = boardSize / 8;
+  const squareH = boardSize / 8;
+
+  const allSquaresGray = [];
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
+      memoryCtx.drawImage(
+        canvas,
+        c * squareW,
+        r * squareH,
+        squareW,
+        squareH,
+        0,
+        0,
+        SQUARE_SIZE,
+        SQUARE_SIZE
+      );
+      
+      const imgData = memoryCtx.getImageData(0, 0, SQUARE_SIZE, SQUARE_SIZE);
+      const { data } = imgData;
+      const gray = new Float32Array(SQUARE_SIZE * SQUARE_SIZE);
+      
+      for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
+        gray[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255.0;
+      }
+      allSquaresGray.push(gray);
+    }
+  }
+
+  logToAndroid("Ekstraksi petak selesai. Memulai prediksi batch...");
+  
+  // Menggunakan fungsi optimasi batching (memproses 64 petak sekaligus)
+  const allLabels = await classifyAllSquares(allSquaresGray);
 
   const board = [];
   for (let r = 0; r < 8; r++) {
-    const rowPieces = [];
-    for (let c = 0; c < 8; c++) {
-      const gray = getSquareGrayscaleFloat32(ctx, c, r, squareW, squareH);
-      const label = await classifySquare(gray);
-      rowPieces.push(label);
-    }
+    const rowPieces = allLabels.slice(r * 8, (r + 1) * 8);
     board.push(rowPieces);
-    logToAndroid("Baris " + (r + 1) + "/8 selesai");
   }
 
   return boardToFen(board, true);
 }
+
 
 async function analyzeImage(dataUrl) {
   try {
