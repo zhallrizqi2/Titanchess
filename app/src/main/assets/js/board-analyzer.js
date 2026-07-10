@@ -15,7 +15,7 @@ const memoryCtx = memoryCanvas.getContext("2d");
 
 async function loadModels() {
   if (!pieceModel) {
-    // --- PERBAIKAN UNTUK FULL ANDROID WEBVIEW ---
+    // --- SET BACKEND KE CPU UNTUK STABILITAS ANDROID WEBVIEW ---
     try {
       await tf.setBackend('cpu');
       logToAndroid("Backend TensorFlow diatur ke: CPU");
@@ -49,6 +49,7 @@ function loadImageFromDataUrl(dataUrl) {
   });
 }
 
+// --- PERBAIKAN TOTAL KLASIFIKASI MENGGUNAKAN UNIFORM TENSOR ---
 async function classifyAllSquares(allSquaresGray) {
   const pixelInputName = pieceModel.inputNodes.find((n) => !/keep/i.test(n)) || pieceModel.inputNodes[0];
   const keepInputName = pieceModel.inputNodes.find((n) => /keep/i.test(n));
@@ -58,12 +59,13 @@ async function classifyAllSquares(allSquaresGray) {
     logToAndroid("pixelInput=" + pixelInputName + " keepInput=" + keepInputName);
   }
 
+  // Siapkan array flat untuk menampung seluruh piksel (64 petak * 32 baris * 32 kolom)
   const flatAllData = new Float32Array(64 * SQUARE_SIZE * SQUARE_SIZE);
   
-  for (let i = 0; i < 64; i++) {
-    const squareData = allSquaresGray[i];
+  for (let b = 0; b < 64; b++) {
+    const squareData = allSquaresGray[b];
     for (let p = 0; p < 1024; p++) {
-      flatAllData[i * 1024 + p] = squareData[p];
+      flatAllData[b * 1024 + p] = squareData[p];
     }
   }
 
@@ -72,13 +74,16 @@ async function classifyAllSquares(allSquaresGray) {
     let input;
     let inputDict = {};
 
+    // Kita buat tensor 4D [batch, height, width, channels] -> [64, 32, 32, 1]
+    // Ini adalah format paling standar yang digunakan saat melatih model klasifikasi gambar catur
     try {
-      input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
+      input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
       return pieceModel.execute(inputDict);
     } catch (e) {
-      input = tf.tensor4d(flatAllData, [64, SQUARE_SIZE, SQUARE_SIZE, 1]);
+      logToAndroid("Fallback ke Tensor 2D karena gagal execute 4D: " + e.message);
+      input = tf.tensor2d(flatAllData, [64, SQUARE_SIZE * SQUARE_SIZE]);
       inputDict = {};
       inputDict[pixelInputName] = input;
       if (keepInputName) inputDict[keepInputName] = keepProb;
@@ -159,7 +164,7 @@ async function imageToFen(dataUrl) {
   
   const squaresOrdered = [];
 
-  // Loop normal dari baris 0 ke 7 (A8 ke H1)
+  // Loop normal dari baris atas ke baris bawah (A8 ke H1)
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
       memoryCtx.clearRect(0, 0, SQUARE_SIZE, SQUARE_SIZE);
@@ -181,7 +186,7 @@ async function imageToFen(dataUrl) {
       const gray = new Float32Array(SQUARE_SIZE * SQUARE_SIZE);
       
       for (let i = 0; i < SQUARE_SIZE * SQUARE_SIZE; i++) {
-        // Coba normalisasi standar (0.0 s.d 1.0)
+        // Normalisasi piksel ke skala 0.0 - 1.0
         gray[i] = (0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2]) / 255.0;
       }
 
@@ -196,7 +201,6 @@ async function imageToFen(dataUrl) {
   for (let r = 0; r < 8; r++) {
     const rowPieces = [];
     for (let c = 0; c < 8; c++) {
-      // Ambil hasil berurutan dari indeks 0 hingga 63
       const index = r * 8 + c;
       rowPieces.push(allLabelsOrdered[index]);
     }
